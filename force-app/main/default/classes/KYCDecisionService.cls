@@ -1,78 +1,163 @@
 public without sharing class KYCDecisionService {
-    public static Boolean isKYCReady(Id partyId) {
-        try {
-            if (partyId == null) {
-                return false;
-            }
 
-            FinServ__PartyProfile__c partyProfile = queryPartyProfile(partyId);
-            if (partyProfile == null) {
-                return false;
-            }
+    /*
+     * Called from Flow.
+     * Receives one or more Account Ids and returns
+     * whether each Account is KYC Ready.
+     */
+    @InvocableMethod(
+        label='Evaluate KYC Readiness'
+        description='Checks whether an Account is KYC Ready.'
+    )
+    public static List<Response> evaluateKYCReadiness(List<Request> requests){
 
-            String normalizedStatus = normalizeStatus(partyProfile.FinServ__KYCStatus__c);
-            Date kycDate = partyProfile.FinServ__KYCDate__c;
+        List<Response> responses = new List<Response>();
 
-            if (String.isBlank(normalizedStatus) || kycDate == null) {
-                return false;
-            }
+        for(Request req : requests){
 
-            return isApprovedStatus(normalizedStatus);
-        } catch (Exception ex) {
-            System.debug(LoggingLevel.ERROR, 'KYCDecisionService.isKYCReady failed: ' + ex.getMessage());
+            Response res = new Response();
+
+            res.accountId = req.accountId;
+            res.isReady = isKYCReady(req.accountId);
+            res.statusDetails = getStatusDetails(req.accountId);
+
+            responses.add(res);
+        }
+
+        return responses;
+    }
+
+    /*
+     * Returns TRUE only if:
+     * 1. KYC Status = Completed - Valid
+     * 2. KYC Date exists
+     * 3. Party Profile exists
+     * 4. Party Profile Stage = Approved
+     */
+    public static Boolean isKYCReady(Id accountId){
+
+        if(accountId == null){
             return false;
         }
-    }
 
-    public static String getStatusDetails(Id partyId) {
-        try {
-            if (partyId == null) {
-                return 'KYC readiness could not be evaluated because no party profile ID was provided.';
-            }
-
-            FinServ__PartyProfile__c partyProfile = queryPartyProfile(partyId);
-            if (partyProfile == null) {
-                return 'No Party Profile was found for the supplied party. Create or link a Party Profile before running the KYC readiness check.';
-            }
-
-            String status = normalizeStatus(partyProfile.FinServ__KYCStatus__c);
-            Date kycDate = partyProfile.FinServ__KYCDate__c;
-
-            if (String.isBlank(status)) {
-                return 'The party profile is missing a KYC status. Update the KYC status to a completed or approved value before proceeding.';
-            }
-
-            if (kycDate == null) {
-                return 'The party profile has a KYC status of ' + status + ', but no KYC date is recorded. Capture the KYC date to mark the party as ready.';
-            }
-
-            if (isApprovedStatus(status)) {
-                return 'KYC is ready for this party. Status is ' + status + ' and the KYC date is ' + kycDate.format() + '.';
-            }
-
-            return 'KYC is not ready yet. Current status is ' + status + ' and the KYC date is ' + kycDate.format() + '. Complete the required onboarding steps and update the status.';
-        } catch (Exception ex) {
-            return 'Unable to evaluate KYC readiness because the service encountered an error: ' + ex.getMessage();
-        }
-    }
-
-    private static FinServ__PartyProfile__c queryPartyProfile(Id partyId) {
-        List<FinServ__PartyProfile__c> profiles = [
-            SELECT Id, FinServ__KYCStatus__c, FinServ__KYCDate__c
-            FROM FinServ__PartyProfile__c
-            WHERE Id = :partyId
+        // Get Account
+        List<Account> accounts = [
+            SELECT FinServ__KYCStatus__c,
+                   FinServ__KYCDate__c
+            FROM Account
+            WHERE Id = :accountId
             LIMIT 1
         ];
 
-        return profiles.isEmpty() ? null : profiles[0];
+        if(accounts.isEmpty()){
+            return false;
+        }
+
+        Account acc = accounts[0];
+
+        // Check Status
+        if(acc.FinServ__KYCStatus__c != 'Completed - Valid'){
+            return false;
+        }
+
+        // Check Date
+        if(acc.FinServ__KYCDate__c == null){
+            return false;
+        }
+
+        // Get Party Profile
+        List<PartyProfile> profiles = [
+            SELECT Stage
+            FROM PartyProfile
+            WHERE AccountId = :accountId
+            LIMIT 1
+        ];
+
+        if(profiles.isEmpty()){
+            return false;
+        }
+
+        // Check Stage
+        if(profiles[0].Stage != 'Approved'){
+            return false;
+        }
+
+        return true;
     }
 
-    private static String normalizeStatus(String status) {
-        return String.isBlank(status) ? '' : status.trim();
+    /*
+     * Returns a user-friendly explanation.
+     */
+    public static String getStatusDetails(Id accountId){
+
+        if(accountId == null){
+            return 'No Account Id supplied.';
+        }
+
+        List<Account> accounts = [
+            SELECT FinServ__KYCStatus__c,
+                   FinServ__KYCDate__c
+            FROM Account
+            WHERE Id = :accountId
+            LIMIT 1
+        ];
+
+        if(accounts.isEmpty()){
+            return 'Account not found.';
+        }
+
+        Account acc = accounts[0];
+
+        if(acc.FinServ__KYCStatus__c == null){
+            return 'KYC Status is missing.';
+        }
+
+        if(acc.FinServ__KYCStatus__c != 'Completed - Valid'){
+            return 'KYC Status must be Completed - Valid.';
+        }
+
+        if(acc.FinServ__KYCDate__c == null){
+            return 'KYC Date is missing.';
+        }
+
+        List<PartyProfile> profiles = [
+            SELECT Stage
+            FROM PartyProfile
+            WHERE AccountId = :accountId
+            LIMIT 1
+        ];
+
+        if(profiles.isEmpty()){
+            return 'Party Profile not found.';
+        }
+
+        if(profiles[0].Stage != 'Approved'){
+            return 'Party Profile is not Approved.';
+        }
+
+        return 'KYC Approved.';
     }
 
-    private static Boolean isApprovedStatus(String status) {
-        Set<String> approvedStatuses = new Set<String>{'approved', 'complete', 'completed', 'ready', 'verified', 'pass', 'passed', 'clear'};
-        return approvedStatuses.contains(status.toLowerCase());
+    // Input from Flow
+    public class Request{
+
+        @InvocableVariable(required=true)
+        public Id accountId;
+
     }
+
+    // Output back to Flow
+    public class Response{
+
+        @InvocableVariable
+        public Id accountId;
+
+        @InvocableVariable
+        public Boolean isReady;
+
+        @InvocableVariable
+        public String statusDetails;
+
+    }
+
 }

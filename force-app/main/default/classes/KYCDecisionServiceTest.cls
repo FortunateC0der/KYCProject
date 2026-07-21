@@ -1,49 +1,166 @@
 @isTest
-private class KYCDecisionServiceTest {
+public class KYCDecisionServiceTest {
+
+    /*
+     * Helper method to create a Party Profile
+     */
+    private static void createPartyProfile(Id accountId, String stage){
+
+        PartyProfile profile = new PartyProfile(
+            AccountId = accountId,
+            Stage = stage
+        );
+
+        insert profile;
+    }
+
+    /*
+     * Test: KYC Ready
+     */
     @isTest
-    static void testReadyWhenApprovedStatusAndDatePresent() {
-        FinServ__PartyProfile__c profile = new FinServ__PartyProfile__c(
-            FinServ__KYCStatus__c = 'Approved',
+    static void testKYCReady(){
+
+        Account acc = new Account(
+            Name = 'John Doe',
+            FinServ__KYCStatus__c = 'Completed - Valid',
             FinServ__KYCDate__c = Date.today()
         );
-        insert profile;
+
+        insert acc;
+
+        createPartyProfile(acc.Id, 'Approved');
 
         Test.startTest();
-        Boolean isReady = KYCDecisionService.isKYCReady(profile.Id);
-        String details = KYCDecisionService.getStatusDetails(profile.Id);
+
+        Boolean result = KYCDecisionService.isKYCReady(acc.Id);
+
         Test.stopTest();
 
-        System.assertEquals(true, isReady, 'Approved status with a KYC date should be ready.');
-        System.assert(details.contains('KYC is ready'), 'Status details should explain that KYC is ready.');
+        System.assertEquals(true, result);
     }
 
+    /*
+     * Test: Missing KYC Status
+     */
     @isTest
-    static void testNotReadyWhenKycDateIsMissing() {
-        FinServ__PartyProfile__c profile = new FinServ__PartyProfile__c(
-            FinServ__KYCStatus__c = 'Approved',
-            FinServ__KYCDate__c = null
+    static void testMissingStatus(){
+
+        Account acc = new Account(
+            Name = 'Jane Doe',
+            FinServ__KYCDate__c = Date.today()
         );
-        insert profile;
 
-        Test.startTest();
-        Boolean isReady = KYCDecisionService.isKYCReady(profile.Id);
-        String details = KYCDecisionService.getStatusDetails(profile.Id);
-        Test.stopTest();
+        insert acc;
 
-        System.assertEquals(false, isReady, 'A missing KYC date should keep the record from being marked ready.');
-        System.assert(details.contains('KYC date'), 'Status details should mention the missing KYC date.');
+        createPartyProfile(acc.Id, 'Approved');
+
+        Boolean result = KYCDecisionService.isKYCReady(acc.Id);
+
+        System.assertEquals(false, result);
     }
 
+    /*
+     * Test: Missing KYC Date
+     */
     @isTest
-    static void testReturnsHelpfulMessageWhenNoPartyProfileExists() {
-        Id missingProfileId = 'a1A000000000001AAA';
+    static void testMissingDate(){
+
+        Account acc = new Account(
+            Name = 'Peter Smith',
+            FinServ__KYCStatus__c = 'Completed - Valid'
+        );
+
+        insert acc;
+
+        createPartyProfile(acc.Id, 'Approved');
+
+        Boolean result = KYCDecisionService.isKYCReady(acc.Id);
+
+        System.assertEquals(false, result);
+    }
+
+    /*
+     * Test: Party Profile is NOT Approved
+     */
+    @isTest
+    static void testPartyProfileNotApproved(){
+
+        Account acc = new Account(
+            Name = 'Mbappe',
+            FinServ__KYCStatus__c = 'Completed - Valid',
+            FinServ__KYCDate__c = Date.today()
+        );
+
+        insert acc;
+
+        createPartyProfile(acc.Id, 'Pending');
+
+        Boolean result = KYCDecisionService.isKYCReady(acc.Id);
+
+        System.assertEquals(false, result);
+    }
+
+    /*
+     * Test: No Party Profile
+     */
+    @isTest
+    static void testNoPartyProfile(){
+
+        Account acc = new Account(
+            Name = 'No Profile',
+            FinServ__KYCStatus__c = 'Completed - Valid',
+            FinServ__KYCDate__c = Date.today()
+        );
+
+        insert acc;
+
+        Boolean result = KYCDecisionService.isKYCReady(acc.Id);
+
+        System.assertEquals(false, result);
+    }
+
+    /*
+     * Test: Flow Invocable Method
+     */
+    @isTest
+    static void testInvocableMethod(){
+
+        Account acc = new Account(
+            Name = 'Flow Test',
+            FinServ__KYCStatus__c = 'Completed - Valid',
+            FinServ__KYCDate__c = Date.today()
+        );
+
+        insert acc;
+
+        createPartyProfile(acc.Id, 'Approved');
+
+        KYCDecisionService.Request req = new KYCDecisionService.Request();
+        req.accountId = acc.Id;
 
         Test.startTest();
-        Boolean isReady = KYCDecisionService.isKYCReady(missingProfileId);
-        String details = KYCDecisionService.getStatusDetails(missingProfileId);
+
+        List<KYCDecisionService.Response> results =
+            KYCDecisionService.evaluateKYCReadiness(
+                new List<KYCDecisionService.Request>{ req }
+            );
+
         Test.stopTest();
 
-        System.assertEquals(false, isReady, 'Missing profiles should not be treated as ready.');
-        System.assert(details.contains('No Party Profile'), 'Status details should explain that no Party Profile exists.');
+        System.assertEquals(1, results.size());
+        System.assertEquals(true, results[0].isReady);
+        System.assertEquals(acc.Id, results[0].accountId);
+        System.assertEquals('KYC Approved.', results[0].statusDetails);
+    }
+
+    /*
+     * Test: Null Account Id
+     */
+    @isTest
+    static void testNullAccountId(){
+
+        Boolean result = KYCDecisionService.isKYCReady(null);
+
+        System.assertEquals(false, result);
     }
 }
