@@ -5,6 +5,9 @@ public with sharing class PartyScreeningSummaryTriggerHandler {
         List<Case> casesToInsert = new List<Case>();
         Map<Id, PartyProfile> partyProfilesById = new Map<Id, PartyProfile>();
 
+        // Fetch Compliance Queue once (outside any loops)
+        Id complianceQueueId = getComplianceQueueId();
+
         Set<Id> partyProfileIds = new Set<Id>();
         for (PartyScreeningSummary screening : newRecords) {
             PartyScreeningSummary oldScreening = oldMap != null ? oldMap.get(screening.Id) : null;
@@ -69,13 +72,7 @@ public with sharing class PartyScreeningSummaryTriggerHandler {
             }
 
             if (riskCategory != null && String.valueOf(riskCategory) == 'High') {
-                casesToInsert.add(new Case(
-                    Subject = 'Compliance Review Required for High Risk Screening',
-                    Priority = 'High',
-                    Status = 'New',
-                    Origin = 'Web',
-                    Description = 'A Party Screening Summary was rejected and flagged as High Risk. Compliance review is required.'
-                ));
+                casesToInsert.add(createComplianceCase(complianceQueueId));
             }
         }
 
@@ -88,12 +85,39 @@ public with sharing class PartyScreeningSummaryTriggerHandler {
         }
     }
 
+    private static Id getComplianceQueueId() {
+        try {
+            Group complianceQueue = [
+                SELECT Id
+                FROM Group
+                WHERE Type = 'Queue'
+                AND DeveloperName = 'Compliance_Queue'
+                LIMIT 1
+            ];
+            return complianceQueue.Id;
+        } catch (QueryException e) {
+            // Queue not found or insufficient permissions - log or handle gracefully
+            System.debug(LoggingLevel.WARN, 'Compliance_Queue not found or inaccessible. Cases will be owned by running user.');
+            return UserInfo.getUserId(); // fallback to current user
+        }
+    }
+
+    private static Case createComplianceCase(Id queueId) {
+        return new Case(
+            Subject = 'Compliance Review Required for High Risk Screening',
+            Priority = 'High',
+            Status = 'New',
+            Origin = 'Agentforce',
+            OwnerId = queueId,
+            Description = 'A Party Screening Summary was rejected and flagged as High Risk. Compliance review is required.'
+        );
+    }
+
     private static Id getPartyProfileId(PartyScreeningSummary screening) {
         Object partyProfileId = screening.get('PartyProfileId');
         if (partyProfileId == null) {
             return null;
         }
-
         return (Id) partyProfileId;
     }
 
