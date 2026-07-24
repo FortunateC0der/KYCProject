@@ -1,51 +1,29 @@
 public without sharing class KYCDecisionService {
 
-    // Called from Flow & receives Account Ids and returns whether each Account is KYC Ready.
+    // Called from Flow to evaluate KYC readiness.
     @InvocableMethod(
         label='Evaluate KYC Readiness'
-        description='Checks whether an Account is KYC Ready.'
+        description='Checks whether a Party Profile is KYC Ready.'
     )
-    public static List<Response> evaluateKYCReadiness(List<Request> requests) {
+    public static List<Response> evaluateKYCReadiness(List<Request> requests){
+
         List<Response> responses = new List<Response>();
-        if (requests.isEmpty()) {
-            return responses;
-        }
 
-        // Bulkify: Collect unique Account Ids
-        Set<Id> accountIds = new Set<Id>();
-        for (Request req : requests) {
-            if (req.accountId != null) {
-                accountIds.add(req.accountId);
-            }
-        }
+        for(Request req : requests){
 
-        // Bulk queries - using your org's field API names
-        Map<Id, Account> accountMap = new Map<Id, Account>([
-            SELECT Id, Name, Email__c, PersonEmail, IsPersonAccount, Phone, 
-                   FinServ__KYCStatus__c, FinServ__KYCDate__c
-            FROM Account 
-            WHERE Id IN :accountIds
-        ]);
-
-        Map<Id, PartyProfile> profileMap = new Map<Id, PartyProfile>([
-            SELECT AccountId, FirstName, LastName, PrimaryPhone, 
-                   PrimaryEmail, DateOfBirth, TaxpayerIdentificationType, 
-                   TaxpayerIdentificationNumber, Stage
-            FROM PartyProfile 
-            WHERE AccountId IN :accountIds
-        ]);
-
-        // Process each request
-        for (Request req : requests) {
             Response res = new Response();
-            res.accountId = req.accountId;
 
-            List<String> issues = getValidationIssues(req.accountId, accountMap, profileMap);
-            
-            res.isReady = issues.isEmpty();
-            res.statusDetails = issues.isEmpty() 
-                ? 'Customer is KYC Ready.' 
-                : String.join(issues, ' ');
+            res.partyProfileId = req.partyProfileId;
+
+            // Get Party Profile once so we can expose AccountId.
+            PartyProfile profile = getPartyProfile(req.partyProfileId);
+
+            if(profile != null){
+                res.accountId = profile.AccountId;
+            }
+
+            res.isReady = isKYCReady(req.partyProfileId);
+            res.statusDetails = getStatusDetails(req.partyProfileId);
 
             responses.add(res);
         }
@@ -53,128 +31,202 @@ public without sharing class KYCDecisionService {
         return responses;
     }
 
-    // Core validation logic - bulk-aware + aligned with your Party Profile fields
-    private static List<String> getValidationIssues(
-        Id accountId, 
-        Map<Id, Account> accountMap, 
-        Map<Id, PartyProfile> profileMap
-    ) {
+    // Returns true when there are no validation issues.
+    public static Boolean isKYCReady(Id partyProfileId){
+
+        return getValidationIssues(partyProfileId).isEmpty();
+
+    }
+
+    // Returns validation results as a readable message.
+    public static String getStatusDetails(Id partyProfileId){
+
+        List<String> issues = getValidationIssues(partyProfileId);
+
+        if(issues.isEmpty()){
+            return 'Customer is KYC Ready.';
+        }
+
+        return String.join(issues, ' ');
+    }
+
+    // Retrieves Party Profile.
+    private static PartyProfile getPartyProfile(Id partyProfileId){
+
+        List<PartyProfile> profiles = [
+
+            SELECT
+                AccountId,
+                FirstName,
+                LastName,
+                PrimaryPhone,
+                PrimaryEmail,
+                DateOfBirth,
+                TaxpayerIdentificationType,
+                TaxpayerIdentificationNumber,
+                Stage
+
+            FROM PartyProfile
+
+            WHERE Id = :partyProfileId
+
+            LIMIT 1
+
+        ];
+
+        return profiles.isEmpty() ? null : profiles[0];
+    }
+
+    // Validates Party Profile and related Account.
+    private static List<String> getValidationIssues(Id partyProfileId){
+
         List<String> issues = new List<String>();
 
-        if (accountId == null) {
-            issues.add('No Account Id supplied.');
+        if(partyProfileId == null){
+
+            issues.add('No Party Profile Id supplied.');
             return issues;
+
         }
 
-        Account acc = accountMap.get(accountId);
-        if (acc == null) {
-            issues.add('Account not found.');
-            return issues;
-        }
+        // Get Party Profile.
+        PartyProfile profile = getPartyProfile(partyProfileId);
 
-        // Account Validation
-        if (String.isBlank(acc.Name)) {
-            issues.add('Account Name is missing.');
-        }
-        String accountEmail = getAccountEmail(acc);
-        if (String.isBlank(accountEmail)) {
-            issues.add('Email is missing.');
-        }
-        if (String.isBlank(acc.Phone)) {
-            issues.add('Phone is missing.');
-        }
-        if (acc.FinServ__KYCStatus__c != 'Completed - Valid') {
-            issues.add('KYC Status must be Completed - Valid.');
-        }
-        if (acc.FinServ__KYCDate__c == null) {
-            issues.add('KYC Date is missing.');
-        }
+        if(profile == null){
 
-        // Party Profile Validation (using your org's API names)
-        PartyProfile pp = profileMap.get(accountId);
-        if (pp == null) {
             issues.add('Party Profile not found.');
             return issues;
+
         }
 
-        if (pp.AccountId == null) {
+        // Check Related Account.
+        if(profile.AccountId == null){
+
             issues.add('Related Account is missing.');
+            return issues;
+
         }
-        if (String.isBlank(pp.FirstName)) {
+
+        // Check First Name.
+        if(String.isBlank(profile.FirstName)){
             issues.add('First Name is missing.');
         }
-        if (String.isBlank(pp.LastName)) {
+
+        // Check Last Name.
+        if(String.isBlank(profile.LastName)){
             issues.add('Last Name is missing.');
         }
-        if (String.isBlank(pp.PrimaryPhone)) {
+
+        // Check Primary Phone.
+        if(String.isBlank(profile.PrimaryPhone)){
             issues.add('Primary Phone is missing.');
         }
-        if (String.isBlank(pp.PrimaryEmail)) {
+
+        // Check Primary Email.
+        if(String.isBlank(profile.PrimaryEmail)){
             issues.add('Primary Email is missing.');
         }
-        if (pp.DateOfBirth == null) {
+
+        // Check Date of Birth.
+        if(profile.DateOfBirth == null){
             issues.add('Date of Birth is missing.');
         }
-        if (String.isBlank(pp.TaxpayerIdentificationType)) {
+
+        // Check Taxpayer Identification Type.
+        if(String.isBlank(profile.TaxpayerIdentificationType)){
             issues.add('Taxpayer Identification Type is missing.');
         }
-        if (String.isBlank(pp.TaxpayerIdentificationNumber)) {
+
+        // Check Taxpayer Identification Number.
+        if(String.isBlank(profile.TaxpayerIdentificationNumber)){
             issues.add('Taxpayer Identification Number is missing.');
         }
-        if (pp.Stage != 'Approved') {
+
+        // Check Stage.
+        if(String.isBlank(profile.Stage)){
+            issues.add('Party Profile Stage is missing.');
+        }
+        else if(profile.Stage != 'Approved'){
             issues.add('Party Profile Stage must be Approved.');
+        }
+
+        // Get Account.
+        List<Account> accounts = [
+
+            SELECT
+                Name,
+                Phone,
+                Email__c,
+                PersonEmail,
+                FinServ__KYCStatus__c,
+                FinServ__KYCDate__c
+
+            FROM Account
+
+            WHERE Id = :profile.AccountId
+
+            LIMIT 1
+
+        ];
+
+        if(accounts.isEmpty()){
+
+            issues.add('Account not found.');
+            return issues;
+
+        }
+
+        Account acc = accounts[0];
+
+        // Check Account Name.
+        if(String.isBlank(acc.Name)){
+            issues.add('Account Name is missing.');
+        }
+
+        // Check Phone.
+        if(String.isBlank(acc.Phone)){
+            issues.add('Phone is missing.');
+        }
+
+        // Check Email.
+        Boolean hasEmail =
+            !String.isBlank(acc.Email__c) ||
+            !String.isBlank(acc.PersonEmail);
+
+        if(!hasEmail){
+            issues.add('Email is missing.');
+        }
+
+        // Check KYC Status.
+        if(String.isBlank(acc.FinServ__KYCStatus__c)){
+            issues.add('KYC Status is missing.');
+        }
+        else if(acc.FinServ__KYCStatus__c != 'Completed - Valid'){
+            issues.add('KYC Status must be Completed - Valid.');
+        }
+
+        // Check KYC Date.
+        if(acc.FinServ__KYCDate__c == null){
+            issues.add('KYC Date is missing.');
         }
 
         return issues;
     }
 
-    // Legacy single-account methods (kept for compatibility)
-    public static Boolean isKYCReady(Id accountId) {
-        if (accountId == null) {
-            return false;
-        }
-        Map<Id, Account> accMap = new Map<Id, Account>([
-            SELECT Id, Name, Email__c, Phone, FinServ__KYCStatus__c, FinServ__KYCDate__c 
-            FROM Account WHERE Id = :accountId
-        ]);
-        Map<Id, PartyProfile> ppMap = new Map<Id, PartyProfile>([
-            SELECT AccountId, FirstName, LastName, PrimaryPhone, PrimaryEmail, 
-                   DateOfBirth, TaxpayerIdentificationType, TaxpayerIdentificationNumber, Stage 
-            FROM PartyProfile WHERE AccountId = :accountId
-        ]);
+    // Flow input.
+    public class Request{
 
-        List<String> issues = getValidationIssues(accountId, accMap, ppMap);
-        return issues.isEmpty();
-    }
-
-    public static String getStatusDetails(Id accountId) {
-        if (accountId == null) {
-            return 'No Account Id supplied.';
-        }
-        Map<Id, Account> accMap = new Map<Id, Account>([
-            SELECT Id, Name, Email__c, Phone, FinServ__KYCStatus__c, FinServ__KYCDate__c 
-            FROM Account WHERE Id = :accountId
-        ]);
-        Map<Id, PartyProfile> ppMap = new Map<Id, PartyProfile>([
-            SELECT AccountId, FirstName, LastName, PrimaryPhone, PrimaryEmail, 
-                   DateOfBirth, TaxpayerIdentificationType, TaxpayerIdentificationNumber, Stage 
-            FROM PartyProfile WHERE AccountId = :accountId
-        ]);
-
-        List<String> issues = getValidationIssues(accountId, accMap, ppMap);
-        return issues.isEmpty() 
-            ? 'Customer is KYC Ready.' 
-            : String.join(issues, ' ');
-    }
-
-    // Input from Flow
-    public class Request {
         @InvocableVariable(required=true)
-        public Id accountId;
+        public Id partyProfileId;
+
     }
 
-    // Output back to Flow
-    public class Response {
+    // Flow output.
+    public class Response{
+
+        @InvocableVariable
+        public Id partyProfileId;
+
         @InvocableVariable
         public Id accountId;
 
@@ -183,13 +235,7 @@ public without sharing class KYCDecisionService {
 
         @InvocableVariable
         public String statusDetails;
+
     }
 
-    private static String getAccountEmail(Account acc) {
-        if (!String.isBlank(acc.Email__c)) {
-            return acc.Email__c;
-        }
-        Object personEmail = acc.get('PersonEmail');
-        return personEmail != null ? String.valueOf(personEmail) : null;
-    }
 }
