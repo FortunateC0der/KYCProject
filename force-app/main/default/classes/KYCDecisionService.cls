@@ -113,6 +113,8 @@ public without sharing class KYCDecisionService {
             SELECT
                 Id,
                 Name,
+                FirstName,
+                LastName,
                 AccountId,
                 PrimaryPhone,
                 PrimaryEmail,
@@ -231,7 +233,7 @@ public without sharing class KYCDecisionService {
 
         // ── 6. Identification Complete  →  PartyIdentityVerification.Status = 'Completed'
         List<PartyIdentityVerification> idvRecords = [
-            SELECT Name, Status
+            SELECT Name, Status, Result
             FROM PartyIdentityVerification
             WHERE PartyProfileId = :partyProfileId
             ORDER BY LastModifiedDate DESC
