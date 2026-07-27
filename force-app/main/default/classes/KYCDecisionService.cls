@@ -112,9 +112,8 @@ public without sharing class KYCDecisionService {
         List<PartyProfile> profiles = [
             SELECT
                 Id,
+                Name,
                 AccountId,
-                FirstName,
-                LastName,
                 PrimaryPhone,
                 PrimaryEmail,
                 DateOfBirth,
@@ -191,7 +190,6 @@ public without sharing class KYCDecisionService {
                 Name,
                 Phone,
                 Email__c,
-                PersonEmail,
                 FinServ__KYCStatus__c,
                 FinServ__KYCDate__c
             FROM Account
@@ -233,7 +231,7 @@ public without sharing class KYCDecisionService {
 
         // ── 6. Identification Complete  →  PartyIdentityVerification.Status = 'Completed'
         List<PartyIdentityVerification> idvRecords = [
-            SELECT Status
+            SELECT Name, Status
             FROM PartyIdentityVerification
             WHERE PartyProfileId = :partyProfileId
             ORDER BY LastModifiedDate DESC
@@ -250,7 +248,7 @@ public without sharing class KYCDecisionService {
         // Adjust the relationship field if your schema differs
         // (e.g. PartyProfileId, PartyIdentityVerificationId, etc.)
         List<IdentityDocument> documents = [
-            SELECT Verified__c
+            SELECT Name, Verified__c
             FROM IdentityDocument
             WHERE PartyProfileId = :partyProfileId
             ORDER BY LastModifiedDate DESC
@@ -265,7 +263,7 @@ public without sharing class KYCDecisionService {
 
         // ── 8. Screening Passed  →  Status = 'Completed' AND ScreeningDecision = 'Clear'
         List<PartyScreeningSummary> screeningSummaries = [
-            SELECT Status, ScreeningDecision
+            SELECT Name, Status, ScreeningDecision
             FROM PartyScreeningSummary
             WHERE PartyProfileId = :partyProfileId
             ORDER BY LastModifiedDate DESC
@@ -286,7 +284,7 @@ public without sharing class KYCDecisionService {
 
         // ── 9. Risk Assessment Passed  →  RiskCategory = Low/Medium AND Type = 'Final'
         List<PartyProfileRisk> riskRecords = [
-            SELECT RiskCategory, Type
+            SELECT Name, RiskCategory, Type
             FROM PartyProfileRisk
             WHERE PartyProfileId = :partyProfileId
             ORDER BY LastModifiedDate DESC
